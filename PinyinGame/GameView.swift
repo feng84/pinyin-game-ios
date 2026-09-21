@@ -37,12 +37,15 @@ final class WebViewModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.backgroundColor = .white
+        self.webView = wv
+
         super.init()
-        webView = WKWebView(frame: .zero, configuration: config)
-        webView.allowsBackForwardNavigationGestures = true
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        webView.backgroundColor = .white
+
+        wv.navigationDelegate = self
+        wv.uiDelegate = self
+        wv.allowsBackForwardNavigationGestures = true
     }
 
     func loadGame() {
