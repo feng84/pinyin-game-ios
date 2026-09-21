@@ -19,15 +19,18 @@ jobs:
         run: |
           set -uo pipefail
           echo "=== Building $GITHUB_WORKSPACE ==="
-          ls "$GITHUB_WORKSPACE/PinyinGame.xcodeproj/"
-          echo "=== Available schemes ==="
-          xcodebuild -list -project "$GITHUB_WORKSPACE/PinyinGame.xcodeproj" 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
+          echo "=== Project structure ==="
+          find "$GITHUB_WORKSPACE" -maxdepth 2 -name "*.swift" -o -name "*.xcodeproj" | sort
+          echo "=== Show build settings (sources) ==="
+          xcodebuild -project "$GITHUB_WORKSPACE/PinyinGame.xcodeproj" -scheme PinyinGame \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -showBuildSettings 2>&1 | grep -iE "SRCROOT|SWIFT|Sources|GameView" | head -30
           echo "=== xcodebuild ==="
           xcodebuild build \
             -project "$GITHUB_WORKSPACE/PinyinGame.xcodeproj" \
             -scheme PinyinGame \
             -configuration Release \
-            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -35,9 +38,22 @@ jobs:
             2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
           RC=${PIPESTATUS[0]}
           echo "=== xcodebuild exit=$RC ==="
-          [ $RC -eq 0 ] || { echo "xcodebuild FAILED"; tail -80 "$GITHUB_WORKSPACE/build.log"; exit 1; }
+          if [ $RC -ne 0 ]; then
+            echo "xcodebuild FAILED"
+            tail -80 "$GITHUB_WORKSPACE/build.log"
+            exit 1
+          fi
           echo "=== build output tree ==="
           find "$GITHUB_WORKSPACE/build" -maxdepth 4
+          echo "=== .app contents ==="
+          for d in "$GITHUB_WORKSPACE/build/Release-iphoneos/PinyinGame.app" "$GITHUB_WORKSPACE/build/iphoneos/PinyinGame.app"; do
+            if [ -d "$d" ]; then
+              echo "App at: $d"
+              ls -la "$d/"
+              echo "Binary: $(file "$d/PinyinGame" 2>/dev/null || echo MISSING)"
+              break
+            fi
+          done
 
       - name: Show build log tail
         run: |
@@ -48,26 +64,35 @@ jobs:
         run: |
           set -euo pipefail
           echo "=== Check build output ==="
-          # 兼容两种输出路径
           APP_DIR=""
-          for d in "$GITHUB_WORKSPACE/build/Release-iphoneos/PinyinGame.app" "$GITHUB_WORKSPACE/build/Release/iphoneos/PinyinGame.app"; do
+          for d in "$GITHUB_WORKSPACE/build/Release-iphoneos/PinyinGame.app" \
+                   "$GITHUB_WORKSPACE/build/iphoneos/PinyinGame.app" \
+                   "$GITHUB_WORKSPACE/build/Release/PinyinGame.app"; do
             [ -d "$d" ] && APP_DIR="$d" && break
           done
           if [ -z "$APP_DIR" ]; then
             echo "APP_DIR missing. Build tree:"
-            find "$GITHUB_WORKSPACE/build" -maxdepth 4 2>/dev/null
+            find "$GITHUB_WORKSPACE/build" -maxdepth 4 2>/dev/null || true
             echo "--- build.log tail ---"
-            tail -80 "$GITHUB_WORKSPACE/build.log"
+            tail -80 "$GITHUB_WORKSPACE/build.log" 2>/dev/null || true
             exit 1
           fi
           echo "App at: $APP_DIR"
           ls -la "$APP_DIR/"
+          # 检查二进制是否存在
+          BIN="$APP_DIR/PinyinGame"
+          if [ ! -f "$BIN" ]; then
+            echo "FATAL: binary missing at $BIN — app is empty shell"
+            exit 1
+          fi
+          echo "Binary: $(file "$BIN")"
           PAYLOAD="$GITHUB_WORKSPACE/Payload"
           mkdir -p "$PAYLOAD"
           cp -R "$APP_DIR" "$PAYLOAD/"
           cd "$GITHUB_WORKSPACE"
           zip -r PinyinGame.ipa Payload/
           ls -lh PinyinGame.ipa
+          echo "=== IPA contents (first 20) ==="
           unzip -l PinyinGame.ipa | head -20
 
       - name: Upload log (debug)
