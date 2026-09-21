@@ -17,11 +17,11 @@ jobs:
 
       - name: Build & Package IPA
         run: |
-          set -e
-          cd "$(dirname "$GITHUB_WORKSPACE")"
-          # Fix: set deployment target to 14.0+ to avoid old SDK warnings
+          set -euo pipefail
+          echo "Building in $GITHUB_WORKSPACE"
+          ls -la "$GITHUB_WORKSPACE/PinyinGame.xcodeproj/" | head -5
           xcodebuild build \
-            -project PinyinGame.xcodeproj \
+            -project "$GITHUB_WORKSPACE/PinyinGame.xcodeproj" \
             -scheme PinyinGame \
             -configuration Release \
             -sdk iphoneos \
@@ -29,9 +29,9 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             BUILD_DIR="$GITHUB_WORKSPACE/build" \
-            2>&1 | tail -20
-          echo "Build complete"
-          ls -la "$GITHUB_WORKSPACE/build/Release-iphoneos/PinyinGame.app/" | head -5
+            2>&1 | tee build.log | tail -30
+          echo "Build exit: $?"
+          ls -la "$GITHUB_WORKSPACE/build/Release-iphoneos/PinyinGame.app/" | head -10
 
       - name: Create IPA
         run: |
