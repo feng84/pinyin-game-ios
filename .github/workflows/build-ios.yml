@@ -30,6 +30,7 @@ jobs:
           TARGET="arm64-apple-ios16.0"
           
           # Compile
+          mkdir -p "$GITHUB_WORKSPACE/build"
           xcrun -sdk iphoneos swiftc \
             -target $TARGET \
             -O \
