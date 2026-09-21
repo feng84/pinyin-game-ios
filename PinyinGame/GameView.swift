@@ -35,11 +35,11 @@ final class WebViewModel: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptEnabled = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        config.allowsBackForwardNavigationGestures = true
         config.mediaTypesRequiringUserActionForPlayback = []
 
         super.init()
         webView = WKWebView(frame: .zero, configuration: config)
+        webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.backgroundColor = .white

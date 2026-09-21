@@ -27,7 +27,7 @@ jobs:
           # Get SDK path
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
           echo "SDK: $SDK_PATH"
-          TARGET="arm64-apple-ios14.0"
+          TARGET="arm64-apple-ios16.0"
           
           # Compile
           xcrun swiftc \
