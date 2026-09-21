@@ -12,90 +12,127 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build
+      - name: Show environment
         run: |
-          set -uo pipefail
-          echo "=== Building $GITHUB_WORKSPACE ==="
-          echo "=== Project structure ==="
-          find "$GITHUB_WORKSPACE" -maxdepth 2 -name "*.swift" -o -name "*.xcodeproj" | sort
-          echo "=== Show build settings (sources) ==="
-          xcodebuild -project "$GITHUB_WORKSPACE/PinyinGame.xcodeproj" -scheme PinyinGame \
-            -configuration Release -destination 'generic/platform=iOS' \
-            -showBuildSettings 2>&1 | grep -iE "SRCROOT|SWIFT|Sources|GameView" | head -30
-          echo "=== xcodebuild ==="
-          xcodebuild build \
-            -project "$GITHUB_WORKSPACE/PinyinGame.xcodeproj" \
-            -scheme PinyinGame \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            BUILD_DIR="$GITHUB_WORKSPACE/build" \
-            2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
-          RC=${PIPESTATUS[0]}
-          echo "=== xcodebuild exit=$RC ==="
-          if [ $RC -ne 0 ]; then
-            echo "xcodebuild FAILED"
-            tail -80 "$GITHUB_WORKSPACE/build.log"
-            exit 1
-          fi
-          echo "=== build output tree ==="
-          find "$GITHUB_WORKSPACE/build" -maxdepth 4
-          echo "=== .app contents ==="
-          for d in "$GITHUB_WORKSPACE/build/Release-iphoneos/PinyinGame.app" "$GITHUB_WORKSPACE/build/iphoneos/PinyinGame.app"; do
-            if [ -d "$d" ]; then
-              echo "App at: $d"
-              ls -la "$d/"
-              echo "Binary: $(file "$d/PinyinGame" 2>/dev/null || echo MISSING)"
-              break
-            fi
-          done
+          xcodebuild -version
+          xcrun --show-sdk-path --sdk iphoneos
+          swift --version
+          uname -m
 
-      - name: Show build log tail
-        run: |
-          echo "===== BUILD LOG (last 100 lines) ====="
-          tail -100 "$GITHUB_WORKSPACE/build.log"
-
-      - name: Verify & Create IPA
+      - name: Build with swiftc
         run: |
           set -euo pipefail
-          echo "=== Check build output ==="
-          APP_DIR=""
-          for d in "$GITHUB_WORKSPACE/build/Release-iphoneos/PinyinGame.app" \
-                   "$GITHUB_WORKSPACE/build/iphoneos/PinyinGame.app" \
-                   "$GITHUB_WORKSPACE/build/Release/PinyinGame.app"; do
-            [ -d "$d" ] && APP_DIR="$d" && break
-          done
-          if [ -z "$APP_DIR" ]; then
-            echo "APP_DIR missing. Build tree:"
-            find "$GITHUB_WORKSPACE/build" -maxdepth 4 2>/dev/null || true
-            echo "--- build.log tail ---"
-            tail -80 "$GITHUB_WORKSPACE/build.log" 2>/dev/null || true
+          echo "=== swiftc compile ==="
+          
+          # Get SDK path
+          SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
+          echo "SDK: $SDK_PATH"
+          TARGET="arm64-apple-ios14.0"
+          
+          # Compile
+          xcrun swiftc \
+            -target $TARGET \
+            -sdk "$SDK_PATH" \
+            -O \
+            -parse-as-library \
+            -o "$GITHUB_WORKSPACE/build/PinyinGame" \
+            -module-name PinyinGame \
+            "$GITHUB_WORKSPACE/PinyinGame/GameView.swift" \
+            -framework SwiftUI \
+            -framework WebKit \
+            -framework UIKit \
+            -framework Foundation \
+            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          
+          RC=${PIPESTATUS[0]}
+          echo "=== swiftc exit=$RC ==="
+          if [ $RC -ne 0 ]; then
+            echo "SWIFTC FAILED"
+            cat "$GITHUB_WORKSPACE/build.log"
             exit 1
           fi
-          echo "App at: $APP_DIR"
-          ls -la "$APP_DIR/"
-          # 检查二进制是否存在
-          BIN="$APP_DIR/PinyinGame"
-          if [ ! -f "$BIN" ]; then
-            echo "FATAL: binary missing at $BIN — app is empty shell"
+          
+          echo "=== Binary info ==="
+          file "$GITHUB_WORKSPACE/build/PinyinGame"
+          ls -lh "$GITHUB_WORKSPACE/build/PinyinGame"
+          
+          # Ad-hoc codesign
+          echo "=== Ad-hoc codesign ==="
+          codesign -s - -f "$GITHUB_WORKSPACE/build/PinyinGame"
+          echo "codesign OK"
+          
+          # Create .app bundle
+          echo "=== Assembling PinyinGame.app ==="
+          APP_DIR="$GITHUB_WORKSPACE/build/PinyinGame.app"
+          mkdir -p "$APP_DIR"
+          cp "$GITHUB_WORKSPACE/build/PinyinGame" "$APP_DIR/PinyinGame"
+          codesign -s - -f "$APP_DIR/PinyinGame"
+          
+          # Info.plist
+          cp "$GITHUB_WORKSPACE/PinyinGame/Info.plist" "$APP_DIR/Info.plist"
+          
+          # Resources
+          mkdir -p "$APP_DIR"
+          if [ -f "$GITHUB_WORKSPACE/PinyinGame/index.html" ]; then
+            cp "$GITHUB_WORKSPACE/PinyinGame/index.html" "$APP_DIR/"
+          fi
+          if [ -d "$GITHUB_WORKSPACE/PinyinGame/audio" ]; then
+            cp -R "$GITHUB_WORKSPACE/PinyinGame/audio" "$APP_DIR/"
+          fi
+          if [ -d "$GITHUB_WORKSPACE/PinyinGame/mouth-shapes" ]; then
+            cp -R "$GITHUB_WORKSPACE/PinyinGame/mouth-shapes" "$APP_DIR/"
+          fi
+          if [ -d "$GITHUB_WORKSPACE/PinyinGame/Assets.xcassets" ]; then
+            # Compile asset catalog to Assets.car
+            xcrun actutil compile \
+              --output-format car \
+              --platform iphoneos \
+              --minimum-deployment-target 14.0 \
+              "$GITHUB_WORKSPACE/PinyinGame/Assets.xcassets" \
+              "$APP_DIR/Assets.car" 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log" || true
+          fi
+          
+          echo "=== .app contents ==="
+          find "$APP_DIR" -type f | sort
+          echo ""
+          echo "=== IPA ready ==="
+
+      - name: Create IPA
+        run: |
+          set -euo pipefail
+          APP_DIR="$GITHUB_WORKSPACE/build/PinyinGame.app"
+          if [ ! -d "$APP_DIR" ]; then
+            echo "FATAL: $APP_DIR not found"
+            find "$GITHUB_WORKSPACE/build" -maxdepth 3
             exit 1
           fi
-          echo "Binary: $(file "$BIN")"
+          
+          # Verify binary exists
+          if [ ! -f "$APP_DIR/PinyinGame" ]; then
+            echo "FATAL: binary missing in $APP_DIR"
+            ls -la "$APP_DIR/"
+            exit 1
+          fi
+          
+          echo "Binary: $(file "$APP_DIR/PinyinGame")"
+          echo "Size: $(ls -lh "$APP_DIR/PinyinGame" | awk '{print $5}')"
+          
+          # Create Payload
           PAYLOAD="$GITHUB_WORKSPACE/Payload"
+          rm -rf "$PAYLOAD"
           mkdir -p "$PAYLOAD"
           cp -R "$APP_DIR" "$PAYLOAD/"
+          
+          # Zip
           cd "$GITHUB_WORKSPACE"
           zip -r PinyinGame.ipa Payload/
+          echo ""
+          echo "=== IPA ==="
           ls -lh PinyinGame.ipa
           echo "=== IPA contents (first 20) ==="
           unzip -l PinyinGame.ipa | head -20
 
-      - name: Upload log (debug)
+      - name: Upload log
         uses: actions/upload-artifact@v4
         with:
           name: build.log
@@ -103,7 +140,7 @@ jobs:
           retention-days: 7
         if: always()
 
-      - name: Upload IPA artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: PinyinGame.ipa
